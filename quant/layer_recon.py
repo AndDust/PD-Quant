@@ -26,6 +26,37 @@ def find_unquantized_module(model: torch.nn.Module, module_list: list = [], name
             find_unquantized_module(module, module_list, name_list)
     return module_list[1:], name_list[1:]
 
+"""
+    重构以优化每一层的输出。
+    
+        model: 需要进行量化的模型
+        fp_model: 对应的FP32精度模型
+        
+        layer: 量化模型中需要被优化的层
+        fp_layer: 对应的浮点模型层
+        
+        cali_data: 用于校准的数据，通常是1024个训练图像
+        batch_size: 重构过程中的小批量大小
+        iters: 优化迭代次数
+        weight: 舍入正则项的权重
+        opt_mode: 优化模式 : "mse"
+        
+        b_range: 温度范围
+        warmup: 没有调度温度的迭代次数占比
+        p: L_p范数最小化
+        lr: 激活delta学习的学习率
+        input_prob: 输入概率
+        keep_gpu: 是否在GPU上保留数据。
+        lamb_r: 正则项的超参数
+        T: KL散度的温度系数
+        bn_lr: DC的学习率
+        lamb_c: DC的超参数
+"""
+
+"""
+    这里的layer和fp_layer是传入的module和fp_module
+    后面都是传入的**kwargs
+"""
 def layer_reconstruction(model: QuantModel, fp_model: QuantModel, layer: QuantModule, fp_layer: QuantModule,
                         cali_data: torch.Tensor,batch_size: int = 32, iters: int = 20000, weight: float = 0.001,
                         opt_mode: str = 'mse', b_range: tuple = (20, 2),
@@ -54,10 +85,25 @@ def layer_reconstruction(model: QuantModel, fp_model: QuantModel, layer: QuantMo
     """
 
     '''get input and set scale'''
+
+    """
+        这一步输入的是qnn
+        cached_inps.shape : torch.Size([1024, 3, 224, 224])
+    """
     cached_inps = get_init(model, layer, cali_data, batch_size=batch_size,
                                         input_prob=True, keep_gpu=keep_gpu)
+
+    """
+        这一步输入fp_model和fp_layer
+        Start correcting 32 batches of data!
+        
+        cached_outs.shape : torch.Size([1024, 64, 112, 112])
+        cached_output.shape : torch.Size([1024, 1000])
+        cur_syms.shape : torch.Size([1024, 3, 224, 224])
+    """
     cached_outs, cached_output, cur_syms = get_dc_fp_init(fp_model, fp_layer, cali_data, batch_size=batch_size,
                                         input_prob=True, keep_gpu=keep_gpu, bn_lr=bn_lr, lamb=lamb_c)
+
     set_act_quantize_params(layer, cali_data=cached_inps[:min(256, cached_inps.size(0))])
 
     '''set state'''
@@ -87,6 +133,7 @@ def layer_reconstruction(model: QuantModel, fp_model: QuantModel, layer: QuantMo
     if layer.act_quantizer.delta is not None:
         layer.act_quantizer.delta = torch.nn.Parameter(torch.tensor(layer.act_quantizer.delta))
         a_para += [layer.act_quantizer.delta]
+
     '''set up drop'''
     layer.act_quantizer.is_training = True
 
@@ -149,20 +196,23 @@ def layer_reconstruction(model: QuantModel, fp_model: QuantModel, layer: QuantMo
     layer.act_quantizer.is_training = False
     layer.trained = True
 
-
+"""
+    这个 LossFunction 类定义了一个用于适应性舍入的总损失函数，包括重构损失、舍入损失和预测差异损失。
+    这个类是在优化量化神经网络层的过程中使用的。
+"""
 class LossFunction:
     def __init__(self,
-                 layer: QuantModule,
-                 round_loss: str = 'relaxation',
+                 layer: QuantModule,  # 量化模块的实例，通常包含了权重和激活函数的量化版本。
+                 round_loss: str = 'relaxation',  # 指定舍入损失的类型，目前支持 'relaxation'。
                  weight: float = 1.,
-                 rec_loss: str = 'mse',
-                 max_count: int = 2000,
-                 b_range: tuple = (10, 2),
-                 decay_start: float = 0.0,
-                 warmup: float = 0.0,
-                 p: float = 2.,
-                 lam: float = 1.0,
-                 T: float = 7.0):
+                 rec_loss: str = 'mse',  # 指定重构损失的类型，目前只支持 'mse'（均方误差）。
+                 max_count: int = 2000,  # 优化过程中的最大迭代次数。
+                 b_range: tuple = (10, 2),  # 温度衰减函数的范围。
+                 decay_start: float = 0.0,  # 温度衰减的开始时间。
+                 warmup: float = 0.0,  # 在优化开始时不计算舍入损失的时间段。
+                 p: float = 2.,  # LP损失的P值。
+                 lam: float = 1.0,  # lam: 预测差异损失的缩放因子
+                 T: float = 7.0):  # 预测差异损失的温度参数。
 
         self.layer = layer
         self.round_loss = round_loss
@@ -178,6 +228,18 @@ class LossFunction:
         self.count = 0
         self.pd_loss = torch.nn.KLDivLoss(reduction='batchmean')
 
+    """
+        计算自适应舍入的总损失：
+        rec_loss是二次输出重构损失
+        round_loss为优化舍入策略的正则化术语
+        pd_loss是预测差异损失。
+        
+        :param pred: 量化模型的输出
+        :param tgt: FP模型的输出
+        :param output: 量化模型预测
+        :param output_fp: FP模型预测
+        :return: 返回损失函数
+    """
     def __call__(self, pred, tgt, output, output_fp):
         """
         Compute the total loss for adaptive rounding:

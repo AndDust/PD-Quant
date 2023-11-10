@@ -5,9 +5,19 @@ from models.regnet import ResBottleneckBlock
 from models.mobilenetv2 import InvertedResidual
 from models.mnasnet import _InvertedResidual
 
-
+""" 
+    提供了多种神经网络块的量化版本，特别为不同的架构（例如ResNet、RegNetX、MobileNetV2和MNASNet）设计。
+    此代码提供了一种方法来量化不同的神经网络块，以便在进行低位宽度计算时仍保持其功能。
+    
+    这个 BaseQuantBlock 类用作构建量化神经网络中块结构的基础实现。
+    它包含了一些基本的设置和方法，为子类提供了一个统一的接口来管理权重和激活函数的量化状态。
+"""
 class BaseQuantBlock(nn.Module):
     """
+    这个基础模块确保了在分支架构网络中，激活函数和量化操作是在元素级加法操作之后执行的，这是因为在这种结构中，
+    多个分支的输出需要相加，而激活函数和量化操作通常应用在这个加法操作之后。通过使用这个基础模块，
+    开发者可以更容易地实现和管理量化神经网络中的块结构，并确保量化操作在正确的位置执行。
+
     Base implementation of block structures for all networks.
     Due to the branch architecture, we have to perform activation function
     and quantization after the elemental-wise add operation, therefore, we
@@ -20,6 +30,10 @@ class BaseQuantBlock(nn.Module):
         self.ignore_reconstruction = False
         self.trained = False
 
+    """ 
+        设置权重量化和激活函数量化的状态。
+        这个方法还遍历模块的所有子模块，如果子模块是一个 QuantModule 类的实例，它也会更新这些子模块的量化状态。
+    """
     def set_quant_state(self, weight_quant: bool = False, act_quant: bool = False):
         # setting weight quantization here does not affect actual forward pass
         self.use_weight_quant = weight_quant
@@ -28,7 +42,14 @@ class BaseQuantBlock(nn.Module):
             if isinstance(m, QuantModule):
                 m.set_quant_state(weight_quant, act_quant)
 
-
+"""
+    用于ResNet-18和ResNet-34的量化版本的基本块。
+    它量化了两个卷积层，并在两个分支相加之后再应用激活函数和激活量化。
+   
+    在ResNet论文中，residual block有两种形式，一种叫BasicBlock，一种叫Bottleneck
+    
+    对ResNet中的BasicBlock结构进行量化
+"""
 class QuantBasicBlock(BaseQuantBlock):
     """
     Implementation of Quantized BasicBlock used in ResNet-18 and ResNet-34.
@@ -60,7 +81,12 @@ class QuantBasicBlock(BaseQuantBlock):
             out = self.act_quantizer(out)
         return out
 
-
+"""
+    对ResNet中的bottleneck结构进行量化
+    
+    用于ResNet-50、ResNet-101和ResNet-152的量化版Bottleneck块。
+    量化了三个卷积层，并在合并之后进行激活和激活量化。
+"""
 class QuantBottleneck(BaseQuantBlock):
     """
     Implementation of Quantized Bottleneck Block used in ResNet-50, -101 and -152.
@@ -98,7 +124,10 @@ class QuantBottleneck(BaseQuantBlock):
             out = self.act_quantizer(out)
         return out
 
-
+"""
+    为RegNetX设计的量化Bottleneck块，但没有SE模块。
+    与QuantBottleneck类似，但结构来源于RegNetX。
+"""
 class QuantResBottleneckBlock(BaseQuantBlock):
     """
     Implementation of Quantized Bottleneck Blockused in RegNetX (no SE module).
@@ -138,7 +167,13 @@ class QuantResBottleneckBlock(BaseQuantBlock):
             out = self.act_quantizer(out)
         return out
 
-
+"""
+    MobileNetV2中使用的量化Inverted Residual Block的实现。
+    反向残差没有激活功能。
+    
+    用于MobileNetV2的量化版Inverted Residual块。
+    根据扩展率有不同的结构，可能包含2或3个卷积层。
+"""
 class QuantInvertedResidual(BaseQuantBlock):
     """
     Implementation of Quantized Inverted Residual Block used in MobileNetV2.
@@ -180,7 +215,10 @@ class QuantInvertedResidual(BaseQuantBlock):
             out = self.act_quantizer(out)
         return out
 
-
+"""
+    用于MNASNet的量化版Inverted Residual块。
+    它包含三个卷积层，并根据apply_residual属性决定是否应用残差连接。
+"""
 class _QuantInvertedResidual(BaseQuantBlock):
     def __init__(self, _inv_res: _InvertedResidual, weight_quant_params: dict = {}, act_quant_params: dict = {}):
         super().__init__()
@@ -207,7 +245,10 @@ class _QuantInvertedResidual(BaseQuantBlock):
             out = self.act_quantizer(out)
         return out
 
-
+"""
+    这两个字典/列表是为了简化在其他部分代码中选择特定块的逻辑。
+    specials将原始块映射到它们的量化版本，而specials_unquantized列出了不需要量化的特定层。 
+"""
 specials = {
     BasicBlock: QuantBasicBlock,
     Bottleneck: QuantBottleneck,

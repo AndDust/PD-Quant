@@ -12,7 +12,10 @@ def set_act_quantize_params(module: Union[QuantModel, QuantModule, BaseQuantBloc
         if isinstance(t, (QuantModule, BaseQuantBlock)):
             t.act_quantizer.set_inited(False)
 
-    '''set or init step size and zero point in the activation quantizer'''
+    '''
+        set or init step size and zero point in the activation quantizer
+        在激活量化器中设置或初始化步长和零点
+    '''
     batch_size = min(batch_size, cali_data.size(0))
     with torch.no_grad():
         for i in range(int(cali_data.size(0) / batch_size)):
