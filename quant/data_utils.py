@@ -8,29 +8,40 @@ from .quant_block import BaseQuantBlock
 from tqdm import trange
 
 """
-    
+    在fp_model上进行的操作
 """
 def save_dc_fp_data(model: QuantModel, layer: Union[QuantModule, BaseQuantBlock], cali_data: torch.Tensor,
                     batch_size: int = 32, keep_gpu: bool = True,
                     input_prob: bool = False, lamb=50, bn_lr=1e-3):
     """Activation after correction"""
     device = next(model.parameters()).device
+
+
     get_inp_out = GetDcFpLayerInpOut(model, layer, device=device, input_prob=input_prob, lamb=lamb, bn_lr=bn_lr)
     cached_batches = []
 
+    """
+        开始DC分布校准
+    """
     print("Start correcting {} batches of data!".format(int(cali_data.size(0) / batch_size)))
+
     for i in trange(int(cali_data.size(0) / batch_size)):
+        """如果进行DC分布校准"""
         if input_prob:
             cur_out, out_fp, cur_sym = get_inp_out(cali_data[i * batch_size:(i + 1) * batch_size])
             cached_batches.append((cur_out.cpu(), out_fp.cpu(), cur_sym.cpu()))
+            """不进行DC分布校正"""
         else:
             cur_out, out_fp = get_inp_out(cali_data[i * batch_size:(i + 1) * batch_size])
             cached_batches.append((cur_out.cpu(), out_fp.cpu()))
+
+    """拼接多个batch"""
     cached_outs = torch.cat([x[0] for x in cached_batches])
     cached_outputs = torch.cat([x[1] for x in cached_batches])
     if input_prob:
         cached_sym = torch.cat([x[2] for x in cached_batches])
     torch.cuda.empty_cache()
+
     if keep_gpu:
         cached_outs = cached_outs.to(device)
         cached_outputs = cached_outputs.to(device)
@@ -81,7 +92,7 @@ def save_inp_oup_data(model: QuantModel, layer: Union[QuantModule, BaseQuantBloc
     """
     device = next(model.parameters()).device
     """
-        得到一个GetLayerInpOut对象，这个对象通过GetLayerInpOut中注册的钩子函数来获取layer的输入和输出
+        得到一个GetLayerInpOut对象，这个对象通过GetLayerInpOut中注册的钩子函数来获取qnn layer的输入和输出
     """
     get_inp_out = GetLayerInpOut(model, layer, device=device, input_prob=input_prob)
     cached_batches = []
@@ -100,6 +111,9 @@ def save_inp_oup_data(model: QuantModel, layer: Union[QuantModule, BaseQuantBloc
         """
         cached_batches.append(cur_inp.cpu())
 
+    """
+       cached_inps.shape : torch.Size([1024, 3, 224, 224]) 
+    """
     cached_inps = torch.cat([x for x in cached_batches])
     torch.cuda.empty_cache()
 
@@ -133,6 +147,8 @@ class DataSaverHook:
         self.output_store = None
 
     def __call__(self, module, input_batch, output_batch):
+        print(f'DataSaverHook 存储了该层input:{input_batch[0].shape},{input_batch[0].flatten()[0:10]}')
+        print(f'DataSaverHook 存储了该层output:{output_batch[0].shape},{output_batch[0].flatten()[0:10]}')
         if self.store_input:
             self.input_store = input_batch
         if self.store_output:
@@ -140,8 +156,9 @@ class DataSaverHook:
         if self.stop_forward:
             raise StopForwardException
 
+
 """
-    获取中间层输楚数据的。
+    获取中间层输出数据的。
 """
 class input_hook(object):
     """
@@ -244,19 +261,24 @@ class GetLayerInpOut:
             如果您想要在前向钩子中执行更复杂的操作，例如访问类的成员变量或方法，您可以使用一个具有 __call__ 方法的对象。
             在这种情况下，您可以将这个对象传递给 register_forward_hook，因为对象的 __call__ 方法实际上是一个可调用的函数。
         """
+        print(f"注册钩子")
         handle = self.layer.register_forward_hook(self.data_saver)
 
         with torch.no_grad():
             # 设置模型的量化状态，包括权重量化和激活量化。
             self.model.set_quant_state(weight_quant=True, act_quant=True)
+            print(f"调用了GetLayerInpOut __call__中的模型前向传播")
             try:
                 # 尝试运行模型的前向传递，将输入数据传递到self.device上。
+                print(f"输入数据是{model_input.shape},{model_input.flatten()[0:10]}")
                 _ = self.model(model_input.to(self.device))
+                print(f"前向传播结束")
             except StopForwardException:
                 pass
 
         # 注销之前注册的前向钩子
         handle.remove()
+        print(f"注销钩子")
 
         """
             钩子函数在该Module(Layer)前向传播过程中把输入数据存储到了self.data_saver.input_store中
@@ -306,6 +328,11 @@ class GetDcFpLayerInpOut:
     def relative_loss(self, A, B):
         return (A-B).abs().mean()/A.abs().mean()
 
+    """ 
+        model_input.shape : torch.Size([32, 3, 224, 224])
+        作用 ：
+        
+    """
     def __call__(self, model_input):
         """关闭量化状态"""
         self.model.set_quant_state(False, False)
@@ -332,12 +359,13 @@ class GetDcFpLayerInpOut:
         with torch.no_grad():
             try:
                 """
-                    执行了模型的前向传播
+                    执行了模型的前向传播,得到fp的最终输出
                     output_fp.shape : torch.Size([32, 1000])
                 """
                 output_fp = self.model(model_input.to(self.device))
             except StopForwardException:
                 pass
+
             if self.input_prob:
                 """如果 self.input_prob 为真，则保存了输入数据的副本到 input_sym 变量中。"""
                 input_sym = self.data_saver.input_store[0].detach()
@@ -347,15 +375,19 @@ class GetDcFpLayerInpOut:
         """
             para_input.shape : torch.Size([32, 3, 224, 224])
         """
+
         para_input = input_sym.data.clone()
         para_input = para_input.to(self.device)
         para_input.requires_grad = True
+
         optimizer = optim.Adam([para_input], lr=self.bn_lr)
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer,
                                                         min_lr=1e-5,
                                                         verbose=False,
                                                         patience=100)
         """
+            DC分布校正流程：
+            
             进行了一个循环，循环次数为 iters，通常是 500 次。在每次迭代中，执行以下步骤：
 
             清零模型参数和优化器的梯度。
@@ -367,6 +399,7 @@ class GetDcFpLayerInpOut:
             执行反向传播和参数更新，以减小总损失。
             调整学习率。
         """
+
         iters=500
         for iter in range(iters):
             self.layer.zero_grad()
@@ -438,6 +471,7 @@ class GetDcFpLayerInpOut:
         with torch.no_grad():
             out_fp = self.layer(para_input)
 
+        """如果开启DC校正"""
         if self.input_prob:
             return  out_fp.detach(), output_fp.detach(), para_input.detach()
         return out_fp.detach(), output_fp.detach()

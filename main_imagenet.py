@@ -163,9 +163,11 @@ if __name__ == '__main__':
     parser.add_argument('--n_bits_a', default=4, type=int, help='bitwidth for activation quantization')
     parser.add_argument('--disable_8bit_head_stem', action='store_true')
 
+    """权重校准参数"""
     # weight calibration parameters
     parser.add_argument('--num_samples', default=1024, type=int, help='size of the calibration dataset')
     parser.add_argument('--iters_w', default=20000, type=int, help='number of iteration for adaround')
+
     """
         舍入成本与重建损失的权重
     """
@@ -176,6 +178,7 @@ if __name__ == '__main__':
     parser.add_argument('--b_end', default=2, type=int, help='temperature at the end of calibration')
     parser.add_argument('--warmup', default=0.2, type=float, help='in the warmup period no regularization is applied')
 
+    """激活校准参数"""
     # activation calibration parameters
     parser.add_argument('--lr', default=4e-5, type=float, help='learning rate for LSQ')
     """
@@ -206,6 +209,7 @@ if __name__ == '__main__':
     torch.cuda.set_device(1)
 
     seed_all(args.seed)
+
     # build imagenet data loader
     train_loader, test_loader = build_imagenet_data(batch_size=args.batch_size, workers=args.workers,
                                                     data_path=args.data_path)
@@ -213,12 +217,8 @@ if __name__ == '__main__':
     # 加载模型
     """
         加载需要量化的模型
-        
-       eval是一个内置的Python函数，用于执行字符串中的Python表达式并返回其结果。例如，eval("2 + 2")将返回4。
-       
-       最终，eval函数执行了如下的代码：
+       eval是一个内置的Python函数，用于执行字符串中的Python表达式并返回其结果。例如，eval("2 + 2")将返回4。最终，eval函数执行了如下的代码：
        hubconf.resnet18(pretrained=True)（如果args.arch是resnet18）。
-       
        这意味着我们正在从hubconf模块中调用一个名为resnet18的函数，并且传递pretrained=True作为它的参数。
     """
     cnn = eval('hubconf.{}(pretrained=True)'.format(args.arch))
@@ -230,6 +230,10 @@ if __name__ == '__main__':
     fp_model.cuda()   # 将复制的模型移动到GPU上
     fp_model.eval()   # 设置复制的模型为评估模式
 
+    """
+        权重量化参数
+        激活量化参数
+    """
     # build quantization parameters
     wq_params = {'n_bits': args.n_bits_w, 'channel_wise': args.channel_wise, 'scale_method': args.init_wmode}
     aq_params = {'n_bits': args.n_bits_a, 'channel_wise': False, 'scale_method': args.init_amode,
@@ -237,11 +241,10 @@ if __name__ == '__main__':
 
     """
         对模型结构进行量化
-        is_fusing=False
+        is_fusing=False 不进行BN fold，关闭量化状态
         
-        不进行BN fold，关闭量化状态
-        
-        层融合目的是将多个连续的层操作融合成一个操作，以减少计算开销和提高模型推理速度。这通常在量化之前进行，作为模型优化的一部分。
+        层融合目的是将多个连续的层操作融合成一个操作，以减少计算开销和提高模型推理速度。
+        这通常在量化之前进行，作为模型优化的一部分。
     """
 
     fp_model = QuantModel(model=fp_model, weight_quant_params=wq_params, act_quant_params=aq_params, is_fusing=False)
@@ -296,6 +299,9 @@ if __name__ == '__main__':
             module.weight_quantizer(module.weight)
             对于如果是QuantModule的weight_quantizer，后续传入数据到就会得到量化结果
         3. 设置量化初始化为完成： module.weight_quantizer.set_inited(True)
+        
+        计算出最优的min和max，然后根据min和max计算出S和zero_point
+        然后根据计算出来的S和zero_point对每个module的权重进行量化和反量化操作
     '''
     set_weight_quantize_params(qnn)
 
@@ -333,7 +339,6 @@ if __name__ == '__main__':
             如果模块不是上述两种类型，则递归调用recon_model函数来继续遍历模型的子模块。
         
         总的来说，这个函数的目的是确保model中的量化模块的参数与fp_model中的相应模块参数相匹配，以便在重构后的模型中保持推理的准确性。
-        这在量化神经网络中是一个常见的操作，以便在训练过程中使用低位宽的表示，而在推理时保持模型的性能。
         
         "参数相匹配" 意味着将低精度位宽的量化参数还原为高精度的位宽，以便在推理时获得与未量化模型相似的性能。
         具体来说，对于量化权重和激活值，通常会在推理时将它们从低精度（如二进制或定点数表示）还原为高精度的浮点数值。
@@ -344,13 +349,14 @@ if __name__ == '__main__':
     """
     def recon_model(model: nn.Module, fp_model: nn.Module):
         """
-        Block reconstruction. For the first and last layers, we can only apply layer reconstruction.
+            Block reconstruction. For the first and last layers, we can only apply layer reconstruction.
         """
         for (name, module), (_, fp_module) in zip(model.named_children(), fp_model.named_children()):
             if isinstance(module, QuantModule):
                 print('Reconstruction for layer {}'.format(name))
                 set_weight_act_quantize_params(module, fp_module)
             elif isinstance(module, BaseQuantBlock):
+                """比如对于ResNet里的包含conv BN Relu的block，在block层面再做一次"""
                 print('Reconstruction for block {}'.format(name))
                 set_weight_act_quantize_params(module, fp_module)
             else:
@@ -358,16 +364,6 @@ if __name__ == '__main__':
 
     """
         开始校准
-        在神经网络模型的量化中，"校准" 是指通过一些过程或技术来确定量化操作的参数，以确保模型在量化后的推理中能够保持准确性和性能。
-        校准是量化的重要步骤之一，因为在将浮点模型转换为量化模型时，需要找到适当的参数设置，以便在不损失太多精度的情况下进行量化推理。
-        校准通常涉及以下几个方面：
-            量化参数：包括权重量化参数和激活量化参数。这些参数控制了量化操作的行为，例如量化的精度、范围等。校准的目标是确定合适的量化参数值，以使量化后的输出尽可能接近浮点模型的输出。
-            数据集：  通常需要使用一个校准数据集，其中包含一些具有代表性的输入样本。通过原始（未量化）模型运行校准数据集，并记录中间层的激活值。校准数据集用于在不同的量化参数设置下运行模型，并收集量化后输出与浮点输出之间的差异信息。
-            损失函数：校准过程中使用的损失函数用于度量量化后输出与浮点输出之间的差异。常见的损失函数包括均方误差（MSE）、交叉熵损失等。
-            优化算法：校准过程通常使用优化算法来调整量化参数，以最小化损失函数。常见的优化算法包括梯度下降、Adam 等。
-            调整模型参数：使用计算出的量化参数调整模型的权重和激活值，以减小量化引入的误差。
-            
-        校准的主要目标是找到合适的量化参数，以最小化量化带来的精度损失。通过这个过程，量化模型的性能可以更接近原始模型的性能，同时仍然享受到量化带来的优势。
     """
     # Start calibration
     recon_model(qnn, fp_model)

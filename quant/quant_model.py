@@ -16,7 +16,7 @@ class QuantModel(nn.Module):
         else:
             """不进行BN折叠，记录原始的FP model，用于后面对比"""
             self.model = model
-            """将常规conv2d和linear层递归替换为QuantModule"""
+            """将常规conv2d和linear层递归替换为QuantModule，QuantModule中可以通过开关决定是否打开量化"""
             self.quant_module_refactor_wo_fuse(self.model, weight_quant_params, act_quant_params)
 
     def quant_module_refactor(self, module: nn.Module, weight_quant_params: dict = {}, act_quant_params: dict = {}):

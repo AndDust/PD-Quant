@@ -10,14 +10,20 @@ from .data_utils import save_inp_oup_data, save_dc_fp_data
     返回的 cached_inps == cali_data
 """
 
-# TODO 为什么返回的 cached_inps == cali_data， 这一步真正做了什么？
-
+# TODO
+"""
+    block ： qnn当前layer
+"""
 def get_init(model, block, cali_data, batch_size, input_prob: bool = False, keep_gpu: bool=True):
     cached_inps = save_inp_oup_data(model, block, cali_data, batch_size, input_prob=input_prob, keep_gpu=keep_gpu)
     return cached_inps
 
 """
     传入fp_model和fp_layer
+    
+    cached_outs ： 经过fp layer的输出
+    cached_outputs ： fp模型最终的输出
+    cached_sym : fp输入经过DC后，再输入到fp layer的输入
 """
 def get_dc_fp_init(model, block, cali_data, batch_size, input_prob: bool = False, keep_gpu: bool=True, lamb=50, bn_lr=1e-3):
     cached_outs, cached_outputs, cached_sym = save_dc_fp_data(model, block, cali_data, batch_size, input_prob=input_prob, keep_gpu=keep_gpu, lamb=lamb, bn_lr=bn_lr)

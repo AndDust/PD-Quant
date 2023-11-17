@@ -52,8 +52,7 @@ def lp_loss(pred, tgt, p=2.0, reduction='none'):
         return (pred - tgt).abs().pow(p).mean()
 
 """
-    PyTorch函数，可用于非对称量化（也称为均匀仿射）量化）。
-    在正向传递中量化其参数，直接传递梯度“through'，忽略发生的量化。
+    PyTorch函数，可用于非对称量化（也称为均匀仿射）量化）。在正向传递中量化其参数，直接传递梯度“through'，忽略发生的量化。
     基于https://arxiv.org/abs/1806.08342.
 """
 class UniformAffineQuantizer(nn.Module):
@@ -75,11 +74,14 @@ class UniformAffineQuantizer(nn.Module):
                  leaf_param: bool = False, prob: float = 1.0):
         super(UniformAffineQuantizer, self).__init__()
         self.sym = symmetric  # 如果为True，则zero_point应始终为0
+
+        """没有实现对称量化"""
         if self.sym:
             raise NotImplementedError
         assert 2 <= n_bits <= 8, 'bitwidth not supported'
         self.n_bits = n_bits
         self.n_levels = 2 ** self.n_bits
+        """scale"""
         self.delta = 1.0
         self.zero_point = 0.0
         self.inited = True
@@ -110,6 +112,7 @@ class UniformAffineQuantizer(nn.Module):
     def set_inited(self, inited: bool = True):  # inited manually
         self.inited = inited
 
+    """更新量化动态范围"""
     def update_quantize_range(self, x_min, x_max):
         if self.running_min is None:
             self.running_min = x_min
@@ -162,7 +165,7 @@ class UniformAffineQuantizer(nn.Module):
         x_dequant = (x_quant - self.zero_point) * self.delta
         """"""
         if self.is_training and self.prob < 1.0:
-            """训练过程，或有丢弃"""
+            """训练过程，并有丢弃"""
             x_ans = torch.where(torch.rand_like(x) < self.prob, x_dequant, x)
         else:
             """返回反量化结果"""

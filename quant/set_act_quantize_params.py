@@ -6,6 +6,7 @@ from typing import Union
 
 def set_act_quantize_params(module: Union[QuantModel, QuantModule, BaseQuantBlock],
                             cali_data, batch_size: int = 256):
+    """量化状态开启"""
     module.set_quant_state(True, True)
 
     for t in module.modules():
@@ -19,6 +20,9 @@ def set_act_quantize_params(module: Union[QuantModel, QuantModule, BaseQuantBloc
     batch_size = min(batch_size, cali_data.size(0))
     with torch.no_grad():
         for i in range(int(cali_data.size(0) / batch_size)):
+            """
+                将256个数据拿过来在该nodule进行一次前向传播
+            """
             module(cali_data[i * batch_size:(i + 1) * batch_size].cuda())
     torch.cuda.empty_cache()
 
