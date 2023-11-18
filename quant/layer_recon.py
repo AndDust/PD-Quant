@@ -118,9 +118,7 @@ def layer_reconstruction(model: QuantModel, fp_model: QuantModel, layer: QuantMo
         cached_inps.size(0) ： 1024
         cached_inps中取出256个来去设置激活量化参数
         
-        这一步是干嘛的？
-        
-        把这个输入送入这个layer，对于激活去初始化得到一个scale
+        把这个输入送入这个layer，利用校准数据集，对于激活去初始化得到一个scale
     """
     set_act_quantize_params(layer, cali_data=cached_inps[:min(256, cached_inps.size(0))])
 
@@ -145,7 +143,9 @@ def layer_reconstruction(model: QuantModel, fp_model: QuantModel, layer: QuantMo
     round_mode = 'learned_hard_sigmoid'
 
 
-    """将权重量化器替换为AdaRoundQuantizer"""
+    """
+        将权重量化器替换为AdaRoundQuantizer
+    """
     # Replace weight quantizer to AdaRoundQuantizer
     w_para, a_para = [], []
     w_opt, a_opt = None, None

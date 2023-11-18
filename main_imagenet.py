@@ -250,14 +250,11 @@ if __name__ == '__main__':
     fp_model = QuantModel(model=fp_model, weight_quant_params=wq_params, act_quant_params=aq_params, is_fusing=False)
     fp_model.cuda()  # 将量化模型移动到GPU上
     fp_model.eval()  # 设置量化模型为评估模式
-    """关闭量化状态"""
+    """fp_model只是用来对比，不需要开启量化"""
     fp_model.set_quant_state(False, False)   # 关闭量化状态
 
-    """
-       这里和前面一个QuantModel有什么区别和联系？
-       这里的 is_fusing=True ,设置量化状态为True
-       
-       经过BN fold和开启量化状态
+    """       
+       qnn是经过BN fold和开启量化状态的 （is_fusing=True）
     """
     qnn = QuantModel(model=cnn, weight_quant_params=wq_params, act_quant_params=aq_params)
     qnn.cuda()
@@ -293,22 +290,33 @@ if __name__ == '__main__':
 
     ''' 
         init weight quantizer
+        
+        初始化权重量化器，对于每个module中的权重计算出scale和zero_point，后续每个权重数值都学习一个 \theta  
+        
         遍历每一个module，针对每一个module，如果是QuantModule,
         1. 开始初始化权重量化器： module.weight_quantizer.set_inited(False)
         2. 遍历每一个module,则用每个module的weight_quantizer计算一个scale和zero_point
-            module.weight_quantizer(module.weight)
+            module.weight_quantizer(module.weight)，
             对于如果是QuantModule的weight_quantizer，后续传入数据到就会得到量化结果
         3. 设置量化初始化为完成： module.weight_quantizer.set_inited(True)
         
         计算出最优的min和max，然后根据min和max计算出S和zero_point
         然后根据计算出来的S和zero_point对每个module的权重进行量化和反量化操作
     '''
+
     set_weight_quantize_params(qnn)
 
+    # tmp = []
+    # for name, named_module in qnn.named_modules():
+    #     if isinstance(named_module,QuantModule):
+    #         print("---------------------------------------------------------")
+    #         tmp += named_module
+    # first_module = tmp[0]
+    # print("org_weight:{}".format(first_module.org_weight))
+    # print(first_module.weight_quantizer.delta, first_module.weight_quantizer.zero_point)
+
     """
-        什么是reconstruction？ 
-        什么是层重建？
-        什么是块重建？
+        重建: 重建就是让量化模型和FP模型的输出尽量保持一致,对量化模型的算子进行了重建,因为直接量化性能下降很多
     """
     def set_weight_act_quantize_params(module, fp_module):
         if isinstance(module, QuantModule):
@@ -323,29 +331,6 @@ if __name__ == '__main__':
 
     """
         区块重建。对于第一层和最后一层，我们只能应用层重建。
-        
-        作用是什么？
-        
-        这段代码定义了一个名为recon_model的函数，用于模型的重构。该函数接受两个模型作为参数：
-        model是待重构的模型，fp_model是作为参考的模型，通常是一个未量化（floating-point）版本的模型。
-        
-        重构的目标是将model中的量化模块的参数设置为与fp_model中相应模块的参数相匹配，以确保重构后的模型在推理时仍然具有良好的性能。
-        
-        函数的主要部分是一个递归的迭代过程，它遍历了model和fp_model的子模块，并根据模块的类型进行不同
-        的操作。
-            具体来说：
-            如果模块是QuantModule类型（可能是量化的单个层或模块），则调用set_weight_act_quantize_params函数来设置模块的权重和激活参数，以使其与fp_module中的相应模块匹配。
-            如果模块是BaseQuantBlock类型（可能是量化的块或模块），也调用set_weight_act_quantize_params函数来设置模块的权重和激活参数。
-            如果模块不是上述两种类型，则递归调用recon_model函数来继续遍历模型的子模块。
-        
-        总的来说，这个函数的目的是确保model中的量化模块的参数与fp_model中的相应模块参数相匹配，以便在重构后的模型中保持推理的准确性。
-        
-        "参数相匹配" 意味着将低精度位宽的量化参数还原为高精度的位宽，以便在推理时获得与未量化模型相似的性能。
-        具体来说，对于量化权重和激活值，通常会在推理时将它们从低精度（如二进制或定点数表示）还原为高精度的浮点数值。
-        这是因为低精度表示可能引入信息丢失，导致模型在推理时性能下降。因此，为了保持模型的性能，需要在推理时将这些量化参数还原为高精度的浮点数值。
-        
-        所以，"参数相匹配" 的过程涉及将量化参数转换回高精度的浮点数值，以确保在推理时模型的计算性能与未量化模型相似。
-        这个过程允许模型在硬件资源受限的情况下进行高效推理。感谢您的澄清，希望这次的回答更加明确。
     """
     def recon_model(model: nn.Module, fp_model: nn.Module):
         """
@@ -368,11 +353,11 @@ if __name__ == '__main__':
     # Start calibration
     recon_model(qnn, fp_model)
 
-    """设置量化状态为True"""
+    """qnn设置量化状态为True"""
     qnn.set_quant_state(weight_quant=True, act_quant=True)
 
     """
-        输出量化后精度
+        qnn完成了reconstruction,使用测试集测试输出精度
     """
     print('Full quantization (W{}A{}) accuracy: {}'.format(args.n_bits_w, args.n_bits_a,
                                                            validate_model(test_loader, qnn)))

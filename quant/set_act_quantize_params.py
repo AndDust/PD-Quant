@@ -22,6 +22,8 @@ def set_act_quantize_params(module: Union[QuantModel, QuantModule, BaseQuantBloc
         for i in range(int(cali_data.size(0) / batch_size)):
             """
                 将256个数据拿过来在该nodule进行一次前向传播
+                
+                QuantModule类的forward中会自动对激活进行激活量化
             """
             module(cali_data[i * batch_size:(i + 1) * batch_size].cuda())
     torch.cuda.empty_cache()

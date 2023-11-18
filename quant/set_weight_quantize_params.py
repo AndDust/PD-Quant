@@ -35,7 +35,10 @@ def set_weight_quantize_params(model):
             """将量化器的初始化状态设置为未完成，以后进行初始化操作"""
             module.weight_quantizer.set_inited(False)
 
-            '''caculate the step size and zero point for weight quantizer'''
+            '''
+                对每个module权重部分的量化
+                caculate the step size and zero point for weight quantizer
+            '''
             module.weight_quantizer(module.weight)
 
             """表示量化器的初始化已完成"""

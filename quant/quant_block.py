@@ -76,7 +76,13 @@ class QuantBasicBlock(BaseQuantBlock):
         out = self.conv1(x)
         out = self.conv2(out)
         out += residual
+        """
+            计算block的输出
+        """
         out = self.activation_function(out)
+        """
+            如果开启了激活量化，则对输出进行量化
+        """
         if self.use_act_quant:
             out = self.act_quantizer(out)
         return out

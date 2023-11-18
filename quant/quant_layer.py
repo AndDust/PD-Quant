@@ -86,10 +86,10 @@ class UniformAffineQuantizer(nn.Module):
         self.zero_point = 0.0
         self.inited = True
 
-        '''if leaf_param, use EMA to set scale
-           如果为True，将在每个通道中计算比例和零点
-        '''
+        '''if leaf_param, use EMA to set scale '''
         self.leaf_param = leaf_param
+
+        """如果为True，将在每个通道中计算比例和零点"""
         self.channel_wise = channel_wise  # 如果为True，则计算每个通道中的比例和零点
         self.eps = torch.tensor(1e-8, dtype=torch.float32)
 
@@ -128,7 +128,7 @@ class UniformAffineQuantizer(nn.Module):
     def forward(self, x: torch.Tensor):
         if self.inited is False:
             """
-                计算得到scale和zero_points
+                先使用mse的方法确定动态范围，然后计算得到scale和zero_points
             """
             if self.leaf_param:
                 self.delta, self.zero_point = self.init_quantization_scale(x.clone().detach(), self.channel_wise)
@@ -375,7 +375,10 @@ class UniformAffineQuantizer(nn.Module):
             best_score = torch.min(score, best_score)
         return best_min, best_max
 
-    """只实现了 mse 的scale_method"""
+    """
+        只实现了 mse 的scale_method
+        使用mse方法来确定动态范围
+    """
     def get_x_min_x_max(self, x):
         if self.scale_method != 'mse':
             raise NotImplementedError
@@ -396,9 +399,12 @@ class UniformAffineQuantizer(nn.Module):
 
         if self.leaf_param:
             return self.update_quantize_range(best_min, best_max)
+
+        """返回动态范围"""
         return best_min, best_max
 
     def init_quantization_scale_channel(self, x: torch.Tensor):
+        """使用mse方法来确定动态范围"""
         x_min, x_max = self.get_x_min_x_max(x)
         return self.calculate_qparams(x_min, x_max)
 
@@ -408,6 +414,7 @@ class UniformAffineQuantizer(nn.Module):
         
     """
     def init_quantization_scale(self, x_clone: torch.Tensor, channel_wise: bool = False):
+        """按通道量化"""
         if channel_wise:
             # determine the scale and zero point channel-by-channel 逐个通道确定scale和zero point
             delta, zero_point = self.init_quantization_scale_channel(x_clone)
@@ -415,6 +422,8 @@ class UniformAffineQuantizer(nn.Module):
             new_shape[0] = x_clone.shape[0]
             delta = delta.reshape(new_shape)
             zero_point = zero_point.reshape(new_shape)
+
+            """不按通道量化"""
         else:
             delta, zero_point = self.init_quantization_scale_channel(x_clone)
         return delta, zero_point
@@ -442,7 +451,7 @@ class QuantModule(nn.Module):
     To activate quantization, please use set_quant_state function.
     """
     """
-        org_module：传入的原始模块，可以是 nn.Conv2d 或 nn.Linear。这个模块将被量化。
+        org_module：传入的原始模块，可以是 nn.Conv2d 或 nn.Linear等。这个模块将被量化。
         weight_quant_params：用于权重量化的参数字典。
         act_quant_params：用于激活函数输出量化的参数字典。
         disable_act_quant：一个布尔值，如果设置为 True，将禁用激活函数的输出量化。
@@ -482,9 +491,12 @@ class QuantModule(nn.Module):
             self.bias = None
             self.org_bias = None
 
+        """停用量化前向传播默认值"""
         # de-activate the quantized forward default
         self.use_weight_quant = False
         self.use_act_quant = False
+
+        """初始化权重和激活的量化器"""
         # initialize quantizer
         self.weight_quantizer = UniformAffineQuantizer(**weight_quant_params)
         self.act_quantizer = UniformAffineQuantizer(**act_quant_params)
@@ -493,9 +505,14 @@ class QuantModule(nn.Module):
         self.activation_function = StraightThrough()
         self.ignore_reconstruction = False
         self.disable_act_quant = disable_act_quant
+
+        """一旦完成重建，就设置为True，后续就会跳过"""
         self.trained = False
 
     """
+        会在layer reconstruction中调用到，qnn前向传播时对权重进行量化
+        
+        量化模块，可以执行量化卷积或正常卷积。要激活量化，请使用set_quant_state函数。
         input.shape : torch.Size([32, 3, 224, 224])
         
         self.weight_quantizer(self.weight)[0][0][0]
@@ -508,7 +525,13 @@ class QuantModule(nn.Module):
         # 使用权重量化
         if self.use_weight_quant:
             """对权重进行量化"""
+            # print("---------------------------------------------------------")
+            # print("Org_weight_shape:{}".format(self.org_weight.shape))
+            # print("Org_weight:{}".format(self.org_weight.flatten()[0:10]))
+            # print("delta:{} & zero_point:{}".format(self.weight_quantizer.delta.flatten(), self.weight_quantizer.zero_point.flatten()))
             weight = self.weight_quantizer(self.weight)
+            # print("Quantized_weight:{}".format(weight.flatten()[0:10]))
+            print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
             bias = self.bias
         # 不使用权重量化
         else:
