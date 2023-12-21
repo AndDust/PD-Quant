@@ -441,7 +441,7 @@ class UniformAffineQuantizer(nn.Module):
 
 """
     量化模块，可以执行量化卷积或正常卷积。
-    要激活量化，请使用set_quant_state函数。
+    要激活量化，请使用set_quant_state函数。 
 """
 class QuantModule(nn.Module):
     """
@@ -531,7 +531,7 @@ class QuantModule(nn.Module):
             # print("delta:{} & zero_point:{}".format(self.weight_quantizer.delta.flatten(), self.weight_quantizer.zero_point.flatten()))
             weight = self.weight_quantizer(self.weight)
             # print("Quantized_weight:{}".format(weight.flatten()[0:10]))
-            print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+            print("++++++----++++++++++++++++++++++++++++++++++++++++++++++++++")
             bias = self.bias
         # 不使用权重量化
         else:

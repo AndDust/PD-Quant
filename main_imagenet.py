@@ -206,7 +206,7 @@ if __name__ == '__main__':
     parser.add_argument('--lamb_c', default=0.02, type=float, help='hyper-parameter for DC')
     args = parser.parse_args()
 
-    torch.cuda.set_device(1)
+    torch.cuda.set_device(0)
 
     seed_all(args.seed)
 

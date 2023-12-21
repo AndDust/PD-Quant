@@ -147,8 +147,8 @@ class DataSaverHook:
         self.output_store = None
 
     def __call__(self, module, input_batch, output_batch):
-        print(f'DataSaverHook 存储了该层input:{input_batch[0].shape},{input_batch[0].flatten()[0:10]}')
-        print(f'DataSaverHook 存储了该层output:{output_batch[0].shape},{output_batch[0].flatten()[0:10]}')
+        # print(f'DataSaverHook 存储了该层input:{input_batch[0].shape},{input_batch[0].flatten()[0:10]}')
+        # print(f'DataSaverHook 存储了该层output:{output_batch[0].shape},{output_batch[0].flatten()[0:10]}')
         if self.store_input:
             self.input_store = input_batch
         if self.store_output:
@@ -268,6 +268,10 @@ class GetLayerInpOut:
             # 设置模型的量化状态，包括权重量化和激活量化。
             self.model.set_quant_state(weight_quant=True, act_quant=True)
             print(f"调用了GetLayerInpOut __call__中的模型前向传播")
+            """
+                为什么尝试运行模型的前向传递 ？
+                debug看起来这里并不能执行，而是会走到Exception
+            """
             try:
                 # 尝试运行模型的前向传递，将输入数据传递到self.device上。
                 print(f"输入数据是{model_input.shape},{model_input.flatten()[0:10]}")
