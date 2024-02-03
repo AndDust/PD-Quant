@@ -1,0 +1,11 @@
+*.so
+*.egg
+*.egg-info
+*.log
+*.pyc
+*.npy
+*.pth
+*.idea/
+.DS_Store
+__pycache__
+model_zoo
