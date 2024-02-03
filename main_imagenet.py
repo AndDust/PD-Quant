@@ -275,17 +275,17 @@ if __name__ == '__main__':
     print(qnn)
 
 
-    cali_data, cali_target = get_train_samples(train_loader, num_samples=args.num_samples)
+    # cali_data, cali_target = get_train_samples(train_loader, num_samples=args.num_samples)
     device = next(qnn.parameters()).device
 
     # Kwargs for weight rounding calibration
     """
         用于权重舍入校准的Kwargs
     """
-    kwargs = dict(cali_data=cali_data, iters=args.iters_w, weight=args.weight,
-                b_range=(args.b_start, args.b_end), warmup=args.warmup, opt_mode='mse',
-                lr=args.lr, input_prob=args.input_prob, keep_gpu=not args.keep_cpu, 
-                lamb_r=args.lamb_r, T=args.T, bn_lr=args.bn_lr, lamb_c=args.lamb_c)
+    # kwargs = dict(cali_data=cali_data, iters=args.iters_w, weight=args.weight,
+    #             b_range=(args.b_start, args.b_end), warmup=args.warmup, opt_mode='mse',
+    #             lr=args.lr, input_prob=args.input_prob, keep_gpu=not args.keep_cpu,
+    #             lamb_r=args.lamb_r, T=args.T, bn_lr=args.bn_lr, lamb_c=args.lamb_c)
 
 
     ''' 
@@ -304,7 +304,7 @@ if __name__ == '__main__':
         然后根据计算出来的S和zero_point对每个module的权重进行量化和反量化操作
     '''
 
-    set_weight_quantize_params(qnn)
+    # set_weight_quantize_params(qnn)
 
     # tmp = []
     # for name, named_module in qnn.named_modules():
@@ -323,9 +323,10 @@ if __name__ == '__main__':
             """
                 传入完整的qnn、fp_model和当前的module、fp_module
             """
-            layer_reconstruction(qnn, fp_model, module, fp_module, **kwargs)
+            layer_reconstruction(module)
         elif isinstance(module, BaseQuantBlock):
-            block_reconstruction(qnn, fp_model, module, fp_module, **kwargs)
+            # block_reconstruction(module)
+            pass
         else:
             raise NotImplementedError
 
@@ -351,7 +352,7 @@ if __name__ == '__main__':
         开始校准
     """
     # Start calibration
-    recon_model(qnn, fp_model)
+    # recon_model(qnn, fp_model)
 
     """qnn设置量化状态为True"""
     qnn.set_quant_state(weight_quant=True, act_quant=True)
@@ -360,4 +361,4 @@ if __name__ == '__main__':
         qnn完成了reconstruction,使用测试集测试输出精度
     """
     print('Full quantization (W{}A{}) accuracy: {}'.format(args.n_bits_w, args.n_bits_a,
-                                                           validate_model(test_loader, qnn)))
+                                                           validate_model(test_loader, cnn)))
