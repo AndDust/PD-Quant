@@ -109,6 +109,9 @@ class UniformAffineQuantizer(nn.Module):
         self.prob = prob
         self.is_training = False
 
+        self.is_act = False
+        self.bn_estimate_abs_max = 0
+
     def set_inited(self, inited: bool = True):  # inited manually
         self.inited = inited
 
@@ -126,13 +129,10 @@ class UniformAffineQuantizer(nn.Module):
         x[0][0][0] : tensor([ 0.0072,  0.0093,  0.0093,  0.0025,  0.0003, -0.0066, -0.0037])
     """
     def forward(self, x: torch.Tensor):
-        """
-                        先使用mse的方法确定动态范围，然后计算得到scale和zero_points
-        """
-        """
-            如果已经计算过scale和zero_point那么就不再计算了
-        """
-        if self.inited is False:
+        if self.inited is False and not self.is_act:
+            """
+                先使用mse的方法确定动态范围，然后计算得到scale和zero_points
+            """
             if self.leaf_param:
                 self.delta, self.zero_point = self.init_quantization_scale(x.clone().detach(), self.channel_wise)
             else:
@@ -160,13 +160,41 @@ class UniformAffineQuantizer(nn.Module):
             x_quant[0][0][0] : tensor([ 95.,  99., 100.,  85.,  81.,  66.,  72.],
             x_dequant[0][0][0] : tensor([ 0.0071,  0.0090,  0.0095,  0.0024,  0.0005, -0.0067, -0.0038],
         """
+
         x_int = round_ste(x / self.delta) + self.zero_point
-        x_quant = torch.clamp(x_int, 0, self.n_levels - 1)
+        # x_quant = torch.clamp(x_int, 0, self.n_levels - 1)
+        if self.is_act:
+            x_quant = torch.clamp(x_int, -self.n_levels / 2, self.n_levels / 2 - 1)
+        else:
+            x_quant = torch.clamp(x_int, 0, self.n_levels - 1)
+
+
+        # if self.is_act:
+        #     print("delta:{}".format(self.delta))
+
         """
             反量化
         """
         x_dequant = (x_quant - self.zero_point) * self.delta
         """"""
+
+        # if self.is_act:
+        #     if self.delta.item() < 0.07239 and self.delta.item() > 0.07237:
+        #         # print("x_int:{}".format(x_int))
+        #         # print("x_quant:{}".format(x_quant))
+        #         # print("clamp:{},{}".format(-self.n_levels / 2, self.n_levels / 2 - 1))
+        #         print("self.delta:{} self.zero_point:{}".format(self.delta, self.zero_point))
+        #         print("x:{}".format(x))
+        #         print("x_dequant:{}".format(x_dequant))
+        #
+        #     if self.delta.item() < 7 and self.delta.item() > 5:
+        #         # print("x_int:{}".format(x_int))
+        #         # print("x_quant:{}".format(x_quant))
+        #         # print("clamp:{},{}".format(-self.n_levels / 2, self.n_levels / 2 - 1))
+        #         print("self.delta:{} self.zero_point:{}".format(self.delta, self.zero_point))
+        #         print("x:{}".format(x))
+        #         print("x_dequant:{}".format(x_dequant))
+
         if self.is_training and self.prob < 1.0:
             """训练过程，并有丢弃"""
             x_ans = torch.where(torch.rand_like(x) < self.prob, x_dequant, x)
@@ -444,7 +472,7 @@ class UniformAffineQuantizer(nn.Module):
 
 """
     量化模块，可以执行量化卷积或正常卷积。
-    要激活量化，请使用set_quant_state函数。 
+    要激活量化，请使用set_quant_state函数。
 """
 class QuantModule(nn.Module):
     """
@@ -459,7 +487,7 @@ class QuantModule(nn.Module):
         act_quant_params：用于激活函数输出量化的参数字典。
         disable_act_quant：一个布尔值，如果设置为 True，将禁用激活函数的输出量化。
     """
-    def __init__(self, org_module: Union[nn.Conv2d, nn.Linear], weight_quant_params: dict = {},
+    def __init__(self, org_module: Union[nn.Conv2d, nn.Linear, nn.Conv1d], weight_quant_params: dict = {},
                  act_quant_params: dict = {}, disable_act_quant=False):
         super(QuantModule, self).__init__()
 
@@ -480,6 +508,10 @@ class QuantModule(nn.Module):
             self.fwd_kwargs = dict(stride=org_module.stride, padding=org_module.padding,
                                    dilation=org_module.dilation, groups=org_module.groups)
             self.fwd_func = F.conv2d
+        elif isinstance(org_module, nn.Conv1d):
+            self.fwd_kwargs = dict(stride=org_module.stride, padding=org_module.padding,
+                                   dilation=org_module.dilation, groups=org_module.groups)
+            self.fwd_func = F.conv1d
         else:
             self.fwd_kwargs = dict()
             self.fwd_func = F.linear
@@ -503,6 +535,7 @@ class QuantModule(nn.Module):
         # initialize quantizer
         self.weight_quantizer = UniformAffineQuantizer(**weight_quant_params)
         self.act_quantizer = UniformAffineQuantizer(**act_quant_params)
+        self.act_quantizer.is_act = True
 
         self.norm_function = StraightThrough()
         self.activation_function = StraightThrough()
@@ -511,6 +544,9 @@ class QuantModule(nn.Module):
 
         """一旦完成重建，就设置为True，后续就会跳过"""
         self.trained = False
+        self.count = 0
+
+        self.quant_name = "null"
 
     """
         会在layer reconstruction中调用到，qnn前向传播时对权重进行量化
@@ -528,28 +564,101 @@ class QuantModule(nn.Module):
         # 使用权重量化
         if self.use_weight_quant:
             """对权重进行量化"""
-            # print("---------------------------------------------------------")
-            # print("Org_weight_shape:{}".format(self.org_weight.shape))
-            # print("Org_weight:{}".format(self.org_weight.flatten()[0:10]))
-            # print("delta:{} & zero_point:{}".format(self.weight_quantizer.delta.flatten(), self.weight_quantizer.zero_point.flatten()))
+            pre = self.weight
+            if torch.max(pre) > 20:
+                print("大权重：{}".format(pre))
+            # print("量化之前权重：{}",format(self.weight))
             weight = self.weight_quantizer(self.weight)
-            # print("Quantized_weight:{}".format(weight.flatten()[0:10]))
-            print("++++++----++++++++++++++++++++++++++++++++++++++++++++++++++")
+            latter = weight
+            # print("量化之后的权重：{}", format(weight))
             bias = self.bias
+
+            # if self.count == 0:
+            #     torch.set_printoptions(precision=8, sci_mode=False)
+            # print("权重量化前后之差：{}".format(latter - pre))
         # 不使用权重量化
         else:
             weight = self.org_weight
             bias = self.org_bias
 
         out = self.fwd_func(input, weight, bias, **self.fwd_kwargs)
+
+        if self.act_quantizer.inited == False:
+            print("out.shape:{}".format(out.shape))
+
+        # if self.act_quantizer.inited == False and isinstance(self.norm_function,(nn.BatchNorm2d, nn.BatchNorm1d)):
+        #     mean = self.norm_function.running_mean
+        #     var = self.norm_function.running_var
+        #
+        #     C = out.shape[1]
+        #     op = None
+        #     if out.dim() == 4:
+        #         op = out.permute(0, 2, 3, 1)
+        #         op = op.reshape(-1, C)
+        #     else:
+        #         op = out
+        #
+        #     k = int(0.999 * op.size(0))
+        #     percentile_90, _ = torch.kthvalue(op, k, dim=0)
+        #
+        #     max_values_dim2, max_indices_dim2 = torch.max(op, dim=0)
+        #     print("conv输出得到的最大值：{}".format(torch.max(max_values_dim2)))
+        #     # print("conv输出得到的99.9分位值：{}".format(torch.max(percentile_90)))
+        #     # n = torch.numel(op)
+        #     # s = (n-1)/math.sqrt(n)
+        #     # print("n的大小：{} s的大小：{}".format(n, s))
+        #     print("BN层数据估计出来的最大值：{}".format(torch.max(mean + 3*torch.sqrt(var))))
+        #
+        #     print("conv输出得到的最小值：{}".format(torch.min(max_values_dim2)))
+        #     print("BN层数据估计出来的最小值：{}".format(torch.max(mean - 3 * torch.sqrt(var))))
+        #
+        #     self.act_quantizer.bn_estimate_abs_max = mean + 3*torch.sqrt(var)
+        #     print("bn_estimate_abs_max:{}".format(self.act_quantizer.bn_estimate_abs_max))
+
         # disable act quantization is designed for convolution before elemental-wise operation,
         # in that case, we apply activation function and quantization after ele-wise op.
-        out = self.norm_function(out)
-        out = self.activation_function(out)
         if self.disable_act_quant:
-            return out
-        if self.use_act_quant:
+            """对于非conv+BN+Relu结构的模块只进行权重量化，不进行激活的量化"""
+            out = out
+            # print("------------self.act_quantizer.delta:{}".format(self.act_quantizer.delta))
+
+
+            # if self.count == 0:
+
+            # if torch.max(pre) > 100:
+            #     print("pre:{}".format(pre))
+            #     print("latter:{}".format(latter))
+            #     torch.set_printoptions(precision=8, sci_mode=False)
+            #     print("激活量化前后相减：{}".format((latter - pre)))
+
+            # self.count +=1
+
+            # if torch.max((latter - pre)) > 100:
+            #     print("pre:{}".format(torch.flatten(pre)[:10]))
+            #     print("latter:{}".format(torch.flatten(latter)[:10]))
+            #     # torch.set_printoptions(precision=8, sci_mode=False)
+            #     print("激活量化前后相减：{}".format(torch.flatten((latter - pre))[:10]))
+            #     print("scale的值是：{}".format(self.act_quantizer.delta))
+
+        out = self.norm_function(out)
+        if self.use_act_quant and not self.disable_act_quant:
+            # print("BN后输出最大值：{}".format(torch.max(out)))
+            # print("使用BN的gamma和beta估计的最大值：{}".format(self.act_quantizer.bn_estimate_abs_max))
+            # print("scale的值是：{}".format(self.act_quantizer.delta))
+
+            pre = out
             out = self.act_quantizer(out)
+            # print("++++++++++++self.act_quantizer.delta:{}".format(self.act_quantizer.delta))
+            # latter = out
+            # print("pre:{}".format(pre))
+            # print("latter:{}".format(latter))
+            # print("激活量化前后相减：{}".format((latter - pre)))
+
+        out = self.activation_function(out)
+        # if self.disable_act_quant:
+        #     return out
+        # if self.use_act_quant:
+        #     out = self.act_quantizer(out)
         return out
 
     def set_quant_state(self, weight_quant: bool = False, act_quant: bool = False):

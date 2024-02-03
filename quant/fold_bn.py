@@ -22,7 +22,14 @@ def _fold_bn(conv_module, bn_module):
     # 计算BN的稳定标准差，这是为了避免分母为零或非常小的情况：
     safe_std = torch.sqrt(y_var + bn_module.eps)
     # 设置权重的形状为(输出通道数, 1, 1, 1):
-    w_view = (conv_module.out_channels, 1, 1, 1)
+    w_view = ()
+    if isinstance(conv_module, nn.Conv2d):
+        w_view = (conv_module.out_channels, 1, 1, 1)
+    elif isinstance(conv_module, nn.Conv1d):
+        w_view = (conv_module.out_channels, 1, 1)
+    elif isinstance(conv_module, nn.Linear):
+        w_view = (-1, 1)
+
     # 检查BN模块是否使用了affine变换（即是否有学习到的scale和shift参数）：
     # 如果有，根据BN的权重和safe_std调整卷积的权重。
     # 计算新的偏置beta。
@@ -74,13 +81,42 @@ def is_bn(m):
 
 
 def is_absorbing(m):
-    return (isinstance(m, nn.Conv2d)) or isinstance(m, nn.Linear)
+    return (isinstance(m, nn.Conv2d)) or isinstance(m, nn.Linear) or isinstance(m, nn.Conv1d)
 
 """
     这个 search_fold_and_remove_bn 函数的目的是在神经网络模型中搜索可融合的批量归一化（Batch Normalization，BN）层，
     并将其参数融合到前面的卷积层或全连接层中。
     融合操作后，原BN层会被替换为一个直通（Straight Through ）层，这是一个不改变输入的层，目的是保持网络结构的一致性。
 """
+# def search_fold_and_remove_bn(model):
+#     model.eval()
+#     prev = None
+#     for n, m in model.named_children():
+#         print("________{}________".format(n))
+#         """判断该层是否是BN层，并且前一层是卷积层或线性层（即能够被前一层吸收）"""
+#         if is_bn(m) and is_absorbing(prev):
+#             """进行BN折叠"""
+#             tmp_module = None
+#             for module in m.modules():
+#                 if isinstance(module, (nn.BatchNorm2d, nn.BatchNorm1d)):
+#                     tmp_module = module
+#                     break
+#
+#             fold_bn_into_conv(prev, tmp_module)
+#             # set the bn module to straight through
+#             """
+#                 原BN层会被替换为一个直通（Straight Through）层，
+#                 这是一个不改变输入的层，目的是保持网络结构的一致性。
+#             """
+#             setattr(model, n, StraightThrough())
+#             """判断本层是否是卷积层或线性层"""
+#         elif is_absorbing(m):
+#             prev = m
+#             """如果都不是，继续递归查找"""
+#         else:
+#             prev = search_fold_and_remove_bn(m)
+#     return prev
+
 def search_fold_and_remove_bn(model):
     model.eval()
     prev = None
