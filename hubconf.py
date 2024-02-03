@@ -8,7 +8,7 @@ from models.regnet import regnetx_3200m as _regnetx_3200m
 import torch
 dependencies = ['torch']
 model_path = {
-    'resnet18': '/home/tmp/resnet18_imagenet.pth.tar',
+    'resnet18': '/home/nku524/tmp/resnet18_imagenet.pth.tar',
     'resnet50': '/home/tmp/resnet50_imagenet.pth.tar',
     'mbv2': '/home/tmp/mobilenetv2.pth.tar',
     'reg600m': '/home/tmp/regnet_600m.pth.tar',

@@ -158,9 +158,9 @@ if __name__ == '__main__':
         n_bits_a ： 激活量化位宽
         channel_wise ： 权重是否按通道量化，默认为True
     """
-    parser.add_argument('--n_bits_w', default=4, type=int, help='bitwidth for weight quantization')
+    parser.add_argument('--n_bits_w', default=8, type=int, help='bitwidth for weight quantization')
     parser.add_argument('--channel_wise', default=True, help='apply channel_wise quantization for weights')
-    parser.add_argument('--n_bits_a', default=4, type=int, help='bitwidth for activation quantization')
+    parser.add_argument('--n_bits_a', default=8, type=int, help='bitwidth for activation quantization')
     parser.add_argument('--disable_8bit_head_stem', action='store_true')
 
     """权重校准参数"""

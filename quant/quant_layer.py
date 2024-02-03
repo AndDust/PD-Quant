@@ -126,10 +126,13 @@ class UniformAffineQuantizer(nn.Module):
         x[0][0][0] : tensor([ 0.0072,  0.0093,  0.0093,  0.0025,  0.0003, -0.0066, -0.0037])
     """
     def forward(self, x: torch.Tensor):
+        """
+                        先使用mse的方法确定动态范围，然后计算得到scale和zero_points
+        """
+        """
+            如果已经计算过scale和zero_point那么就不再计算了
+        """
         if self.inited is False:
-            """
-                先使用mse的方法确定动态范围，然后计算得到scale和zero_points
-            """
             if self.leaf_param:
                 self.delta, self.zero_point = self.init_quantization_scale(x.clone().detach(), self.channel_wise)
             else:
